@@ -1,0 +1,1 @@
+DATABASE_URL = "postgresql://megansaffiliatemarketing:Sunflower91*@localhost:5432/affiliate"
