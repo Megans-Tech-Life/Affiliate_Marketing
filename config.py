@@ -1,1 +1,6 @@
-DATABASE_URL = "postgresql://megansaffiliatemarketing:Sunflower91*@localhost:5432/affiliate"
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")

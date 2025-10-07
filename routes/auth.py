@@ -1,21 +1,29 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import APIRouter, HTTPException, Depends
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy.orm import declarative_base, Session
+from sqlalchemy.orm import Session
+from pydantic import BaseModel, constr
 
 from database import SessionLocal
 from models import User
+from fastapi.security import OAuth2PasswordBearer
 
-import hashlib
+# Pydantic schemas 
+class UserCreate(BaseModel):
+    username: str
+    password: constr(min_length=6, max_length=72)
 
-# FastAPI Router
+class UserLogin(BaseModel):
+    username: str
+    password: constr(min_length=6, max_length=72)
+
+# Router
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# Secret key for JWT
+# JWT settings
 SECRET_KEY = "6EKPVNR_4STFSkzDhJjwVcc9ggh5ZgwHSFHDG33ZsBa9osJxr_Gv1cPJ-M3DKnM0K7GV-xHmt1SdAlWFXXQC-Q"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
@@ -24,9 +32,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # OAuth2 scheme
+from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
-# DB Dependency
+# DB dependency
 def get_db():
     db = SessionLocal()
     try:
@@ -34,53 +43,55 @@ def get_db():
     finally:
         db.close()
 
-def verify_password(plain_password, hashed_password):
-    sha_password = hashlib.sha256(plain_password.encode()).hexdigest()
-    return pwd_context.verify(sha_password, hashed_password)
+# Password verification and hashing
+def get_password_hash(password: str):
+    if not password:
+        raise ValueError("Password cannot be empty")
+    truncated = password[:72]  # bcrypt limit
+    return pwd_context.hash(truncated)
 
-def get_password_hash(password):
-    sha_password = hashlib.sha256(password.encode()).hexdigest()
-    return pwd_context.hash(sha_password)
+def verify_password(plain_password: str, hashed_password: str):
+    truncated = plain_password[:72]
+    return pwd_context.verify(truncated, hashed_password)
 
+# JWT token creation
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-# Register route
+# Routes
 @router.post("/register")
-def register(username: str, password: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == username).first()
-    if user:
+def register(user: UserCreate, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter(User.username == user.username).first()
+    if existing_user:
         raise HTTPException(status_code=400, detail="User already exists")
-  
-    hashed_password = get_password_hash(password)
-    new_user = User(username=username, hashed_password=hashed_password)
+
+    hashed_password = get_password_hash(user.password)
+    new_user = User(username=user.username, hashed_password=hashed_password)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     return {"message": "User created successfully"}
 
-# Login route
 @router.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+def login(user: UserLogin, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.username == user.username).first()
+    if not db_user or not verify_password(user.password, db_user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
-    
+
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": db_user.username}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-# Protected route
 @router.get("/me")
 def read_users_me(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        print("Decoded payload:", payload)
         username: str = payload.get("sub")
         if username is None:
             raise HTTPException(status_code=401, detail="Could not validate credentials")
@@ -90,5 +101,6 @@ def read_users_me(token: str = Depends(oauth2_scheme), db: Session = Depends(get
             raise HTTPException(status_code=401, detail="Could not validate credentials")
         return {"username": user.username}
     
-    except JWTError:
+    except JWTError as e:
+        print("JWTError:", e)
         raise HTTPException(status_code=401, detail="Could not validate credentials")
