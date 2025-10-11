@@ -7,18 +7,33 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, constr
 
-from database import SessionLocal
-from models import User
+from core.dependencies import get_db
+from core.database import Base
 from fastapi.security import OAuth2PasswordBearer
+
+# TODO: (Ask for company preference)Move User model to a proper auth app module when reorganizing auth with models, schemas, routes, services
+# For now, I'll define it here to maintain compatibility
+import uuid
+from sqlalchemy import Column, String, DateTime, Boolean
+from sqlalchemy.dialects.postgresql import UUID
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username = Column(String(255), unique=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 # Pydantic schemas 
 class UserCreate(BaseModel):
     username: str
-    password: constr(min_length=6, max_length=72)
+    password: constr(min_length=6, max_length=72)  # simplified for now, add validation later
 
 class UserLogin(BaseModel):
     username: str
-    password: constr(min_length=6, max_length=72)
+    password: constr(min_length=6, max_length=72)  # simplified for now, add validation later
 
 # Router
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -34,14 +49,6 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # OAuth2 scheme
 from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
-
-# DB dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # Password verification and hashing
 def get_password_hash(password: str):
